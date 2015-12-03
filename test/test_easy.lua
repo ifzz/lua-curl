@@ -1,12 +1,14 @@
-local RUN = lunit and function()end or function ()
+local lunit, RUN = lunit do
+RUN   = lunit and function()end or function ()
   local res = lunit.run()
   if res.errors + res.failed > 0 then
     os.exit(-1)
   end
   return os.exit(0)
 end
+lunit = require "lunit"
+end
 
-local lunit      = require "lunit"
 local TEST_CASE  = assert(lunit.TEST_CASE)
 local skip       = lunit.skip or function() end
 
@@ -790,6 +792,38 @@ function test_unset()
   -- assert_nil(pfields.value)
 
   -- c:perform()
+end
+
+end
+
+local _ENV = TEST_CASE'setopt_user_data'     if ENABLE then
+
+local c
+
+function setup()
+  if c then c:close() end
+  c = nil
+end
+
+function test_data()
+  c = assert(curl.easy())
+  assert_nil(c:getdata())
+  c:setdata("hello")
+  assert_equal("hello", c:getdata())
+end
+
+function test_cleanup()
+  local ptr do
+    local t = {}
+    local e = curl.easy():setdata(t)
+    ptr = weak_ptr(t)
+    gc_collect()
+
+    assert_equal(t, ptr.value)
+  end
+
+  gc_collect()
+  assert_nil(ptr.value)
 end
 
 end

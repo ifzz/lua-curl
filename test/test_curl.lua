@@ -1,13 +1,15 @@
-local RUN = lunit and function()end or function ()
+local lunit, RUN = lunit do
+RUN   = lunit and function()end or function ()
   local res = lunit.run()
   if res.errors + res.failed > 0 then
     os.exit(-1)
   end
   return os.exit(0)
 end
+lunit = require "lunit"
+end
 
 local _,luacov   = pcall(require, "luacov")
-local lunit      = require "lunit"
 local TEST_CASE  = assert(lunit.TEST_CASE)
 local skip       = lunit.skip or function() end
 
@@ -89,6 +91,20 @@ function test_add_handle()
 
   assert_equal(#urls + 1, i)
   assert_nil(c)
+end
+
+function test_info_read()
+  local url = 'http://httpbin.org/get?key=1'
+  c = assert(curl.easy{url=url, writefunction=function() end})
+  assert_equal(m, m:add_handle(c))
+
+  while m:perform() > 0 do m:wait() end
+
+  local h, ok, err = m:info_read()
+  assert_equal(c, h)
+
+  local h, ok, err = m:info_read()
+  assert_equal(0, h)
 end
 
 end
