@@ -41,7 +41,10 @@ int lcurl_easy_create(lua_State *L, int error_mode){
 
   p->err_mode    = error_mode;
   if(!p->curl) return lcurl_fail_ex(L, p->err_mode, LCURL_ERROR_EASY, CURLE_FAILED_INIT);
-  p->L           = L;
+
+  p->magic       = LCURL_EASY_MAGIC;
+  p->L           = NULL;
+  p->post        = NULL;
   p->storage     = lcurl_storage_init(L);
   p->wr.cb_ref   = p->wr.ud_ref = LUA_NOREF;
   p->rd.cb_ref   = p->rd.ud_ref = LUA_NOREF;
@@ -114,6 +117,12 @@ static int lcurl_easy_perform(lua_State *L){
   lua_settop(L, top);
 
   assert(p->rbuffer.ref == LUA_NOREF);
+
+  // store reference to current coroutine to callbacks
+  p->L = L;
+  if(p->post){
+    p->post->L = L;
+  }
 
   code = curl_easy_perform(p->curl);
 
@@ -308,6 +317,8 @@ static int lcurl_easy_set_HTTPPOST(lua_State *L){
     curl_easy_setopt(p->curl, CURLOPT_READFUNCTION, lcurl_hpost_read_callback);
   }
 
+  p->post = post;
+
   lua_settop(L, 1);
   return 1;
 }
@@ -325,6 +336,33 @@ static int lcurl_easy_set_SHARE(lua_State *L){
   lua_settop(L, 1);
   return 1;
 }
+
+#if LCURL_CURL_VER_GE(7,46,0)
+
+static int lcurl_easy_set_STREAM_DEPENDS_impl(lua_State *L, int opt){
+  lcurl_easy_t *p = lcurl_geteasy(L);
+  lcurl_easy_t *e = lcurl_geteasy_at(L, 2);
+  CURLcode code = curl_easy_setopt(p->curl, opt, e->curl);
+  if(code != CURLE_OK){
+    return lcurl_fail_ex(L, p->err_mode, LCURL_ERROR_EASY, code);
+  }
+
+  lcurl_storage_preserve_iv(L, p->storage, opt, 2);
+
+  lua_settop(L, 1);
+  return 1;
+}
+
+static int lcurl_easy_set_STREAM_DEPENDS(lua_State *L){
+  return lcurl_easy_set_STREAM_DEPENDS_impl(L, CURLOPT_STREAM_DEPENDS);
+}
+
+static int lcurl_easy_set_STREAM_DEPENDS_E(lua_State *L){
+  return lcurl_easy_set_STREAM_DEPENDS_impl(L, CURLOPT_STREAM_DEPENDS_E);
+}
+
+#endif
+
 //}
 
 //{ unset
@@ -420,6 +458,8 @@ static int lcurl_easy_unset_HTTPPOST(lua_State *L){
     lcurl_storage_remove_i(L, p->storage, CURLOPT_HTTPPOST);
   }
 
+  p->post = NULL;
+
   lua_settop(L, 1);
   return 1;
 }
@@ -508,6 +548,38 @@ static int lcurl_easy_unset_POSTFIELDS(lua_State *L){
   lua_settop(L, 1);
   return 1;
 }
+
+#if LCURL_CURL_VER_GE(7,46,0)
+
+static int lcurl_easy_unset_STREAM_DEPENDS(lua_State *L){
+  lcurl_easy_t *p = lcurl_geteasy(L);
+
+  CURLcode code = curl_easy_setopt(p->curl, CURLOPT_STREAM_DEPENDS, NULL);
+  if(code != CURLE_OK){
+    return lcurl_fail_ex(L, p->err_mode, LCURL_ERROR_EASY, code);
+  }
+
+  lcurl_storage_remove_i(L, p->storage, CURLOPT_STREAM_DEPENDS);
+
+  lua_settop(L, 1);
+  return 1;
+}
+
+static int lcurl_easy_unset_STREAM_DEPENDS_E(lua_State *L){
+  lcurl_easy_t *p = lcurl_geteasy(L);
+
+  CURLcode code = curl_easy_setopt(p->curl, CURLOPT_STREAM_DEPENDS_E, NULL);
+  if(code != CURLE_OK){
+    return lcurl_fail_ex(L, p->err_mode, LCURL_ERROR_EASY, code);
+  }
+
+  lcurl_storage_remove_i(L, p->storage, CURLOPT_STREAM_DEPENDS_E);
+
+  lua_settop(L, 1);
+  return 1;
+}
+
+#endif
 
 //}
 
@@ -758,12 +830,15 @@ static size_t lcurl_read_callback(lua_State *L,
 
 static size_t lcurl_easy_read_callback(char *buffer, size_t size, size_t nitems, void *arg){
   lcurl_easy_t *p = arg;
+  if(p->magic == LCURL_HPOST_STREAM_MAGIC){
+    return lcurl_hpost_read_callback(buffer, size, nitems, arg);
+  }
   return lcurl_read_callback(p->L, &p->rd, &p->rbuffer, buffer, size, nitems);
 }
 
 static size_t lcurl_hpost_read_callback(char *buffer, size_t size, size_t nitems, void *arg){
   lcurl_hpost_stream_t *p = arg;
-  return lcurl_read_callback(p->L, &p->rd, &p->rbuffer, buffer, size, nitems);
+  return lcurl_read_callback(*p->L, &p->rd, &p->rbuffer, buffer, size, nitems);
 }
 
 static int lcurl_easy_set_READFUNCTION(lua_State *L){
@@ -891,6 +966,10 @@ static int lcurl_easy_setopt(lua_State *L){
     OPT_ENTRY(readfunction,      READFUNCTION,     TTT, 0, 0)
     OPT_ENTRY(headerfunction,    HEADERFUNCTION,   TTT, 0, 0)
     OPT_ENTRY(progressfunction,  PROGRESSFUNCTION, TTT, 0, 0)
+#if LCURL_CURL_VER_GE(7,46,0)
+    OPT_ENTRY(stream_depends,    STREAM_DEPENDS,   TTT, 0, 0)
+    OPT_ENTRY(stream_depends_e,  STREAM_DEPENDS_E, TTT, 0, 0)
+#endif
   }
 #undef OPT_ENTRY
 
@@ -914,6 +993,10 @@ static int lcurl_easy_unsetopt(lua_State *L){
     OPT_ENTRY(readfunction,      READFUNCTION,     TTT, 0, 0)
     OPT_ENTRY(headerfunction,    HEADERFUNCTION,   TTT, 0, 0)
     OPT_ENTRY(progressfunction,  PROGRESSFUNCTION, TTT, 0, 0)
+#if LCURL_CURL_VER_GE(7,46,0)
+    OPT_ENTRY(stream_depends,    STREAM_DEPENDS,   TTT, 0, 0)
+    OPT_ENTRY(stream_depends_e,  STREAM_DEPENDS_E, TTT, 0, 0)
+#endif
   }
 #undef OPT_ENTRY
 
@@ -974,6 +1057,10 @@ static const struct luaL_Reg lcurl_easy_methods[] = {
   OPT_ENTRY(readfunction,      READFUNCTION,     TTT, 0, 0)
   OPT_ENTRY(headerfunction,    HEADERFUNCTION,   TTT, 0, 0)
   OPT_ENTRY(progressfunction,  PROGRESSFUNCTION, TTT, 0, 0)
+#if LCURL_CURL_VER_GE(7,46,0)
+  OPT_ENTRY(stream_depends,    STREAM_DEPENDS,   TTT, 0, 0)
+  OPT_ENTRY(stream_depends_e,  STREAM_DEPENDS_E, TTT, 0, 0)
+#endif
 #undef OPT_ENTRY
 
 #define OPT_ENTRY(L, N, T, S, D) { "unsetopt_"#L, lcurl_easy_unset_##N },
@@ -985,6 +1072,10 @@ static const struct luaL_Reg lcurl_easy_methods[] = {
   OPT_ENTRY(readfunction,      READFUNCTION,     TTT, 0, 0)
   OPT_ENTRY(headerfunction,    HEADERFUNCTION,   TTT, 0, 0)
   OPT_ENTRY(progressfunction,  PROGRESSFUNCTION, TTT, 0, 0)
+#if LCURL_CURL_VER_GE(7,46,0)
+  OPT_ENTRY(stream_depends,    STREAM_DEPENDS,   TTT, 0, 0)
+  OPT_ENTRY(stream_depends_e,  STREAM_DEPENDS_E, TTT, 0, 0)
+#endif
 #undef OPT_ENTRY
 
 #define OPT_ENTRY(L, N, T, S) { "getinfo_"#L, lcurl_easy_get_##N },
@@ -1020,6 +1111,10 @@ static const lcurl_const_t lcurl_easy_opt[] = {
   OPT_ENTRY(readfunction,      READFUNCTION,     TTT, 0, 0)
   OPT_ENTRY(headerfunction,    HEADERFUNCTION,   TTT, 0, 0)
   OPT_ENTRY(progressfunction,  PROGRESSFUNCTION, TTT, 0, 0)
+#if LCURL_CURL_VER_GE(7,46,0)
+  OPT_ENTRY(stream_depends,    STREAM_DEPENDS,   TTT, 0, 0)
+  OPT_ENTRY(stream_depends_e,  STREAM_DEPENDS_E, TTT, 0, 0)
+#endif
 #undef OPT_ENTRY
 #undef FLG_ENTRY
 
@@ -1035,9 +1130,8 @@ void lcurl_easy_initlib(lua_State *L, int nup){
   /* Hack. We ensure that lcurl_easy_t and lcurl_hpost_stream_t
      compatiable for readfunction
   */
-  LCURL_STATIC_ASSERT(offsetof(lcurl_easy_t, L)       == offsetof(lcurl_hpost_stream_t, L));
-  LCURL_STATIC_ASSERT(offsetof(lcurl_easy_t, rd)      == offsetof(lcurl_hpost_stream_t, rd));
-  LCURL_STATIC_ASSERT(offsetof(lcurl_easy_t, rbuffer) == offsetof(lcurl_hpost_stream_t, rbuffer));
+  LCURL_STATIC_ASSERT(offsetof(lcurl_easy_t, magic)     == offsetof(lcurl_hpost_stream_t, magic));
+  LCURL_STATIC_ASSERT(sizeof(((lcurl_easy_t*)0)->magic) == sizeof(((lcurl_hpost_stream_t*)0)->magic));
 
   if(!lutil_createmetap(L, LCURL_EASY, lcurl_easy_methods, nup))
     lua_pop(L, nup);

@@ -1,18 +1,10 @@
--- This file was automatically generated for the LuaDist project.
-
 package = "Lua-cURL"
-version = "0.3.2-1"
+version = "0.3.3-1"
 
--- LuaDist source
 source = {
-  tag = "0.3.2-1",
-  url = "git://github.com/LuaDist2/lua-curl.git"
+  url = "https://github.com/Lua-cURL/Lua-cURLv3/archive/v0.3.3.zip",
+  dir = "Lua-cURLv3-0.3.3",
 }
--- Original source
--- source = {
---   url = "https://github.com/Lua-cURL/Lua-cURLv3/archive/v0.3.2.zip",
---   dir = "Lua-cURLv3-0.3.2",
--- }
 
 description = {
   summary = "Lua binding to libcurl",
@@ -78,4 +70,5 @@ build = {
     },
   }
 }
+
 
